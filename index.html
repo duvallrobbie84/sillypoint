@@ -783,7 +783,14 @@ function resumeGame() {
 }
 
 function startFresh() {
-  state = defaultState();
+  const keep = {
+    wicketRule: state.wicketRule, wicketPenalty: state.wicketPenalty,
+    wideBase: state.wideBase, noballBase: state.noballBase,
+    wideRebowl: state.wideRebowl, noballRebowl: state.noballRebowl,
+    ballsPerOver: state.ballsPerOver,
+    startRuns: state.startRuns, target: state.target
+  };
+  state = Object.assign(defaultState(), keep, { runs: keep.startRuns });
   saveToStorage();
   closeModal('resume-modal');
   refresh();
@@ -1174,6 +1181,7 @@ function resetAll() {
     wicketRule: state.wicketRule, wicketPenalty: state.wicketPenalty,
     wideBase: state.wideBase, noballBase: state.noballBase,
     wideRebowl: state.wideRebowl, noballRebowl: state.noballRebowl,
+    ballsPerOver: state.ballsPerOver,
     startRuns: state.startRuns, target: state.target
   };
   state = Object.assign(defaultState(), keep, { runs: keep.startRuns });
@@ -1466,6 +1474,9 @@ if (saved && saved.deliveries && saved.deliveries.length > 0) {
     'Game in progress: ' + runs + '/' + wkts + ' — Over ' + (over - 1) + ', Ball ' + ball + '. Resume?';
   // modal stays open, user picks
 } else {
+  // No deliveries recorded yet, but still carry over any saved settings
+  // (balls per over, wide/no-ball/wicket rules, etc.) rather than resetting to defaults.
+  if (saved) state = saved;
   closeModal('resume-modal');
   refresh();
   updateEooButton();
