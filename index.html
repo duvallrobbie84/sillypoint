@@ -487,6 +487,14 @@ select.modal-select:focus { outline: none; border-color: var(--ink); }
     <div class="settings-content">
 
       <div class="setting-group">
+        <span class="setting-label">Over length</span>
+        <div class="setting-row">
+          <label>Balls per over<br><span style="color:var(--muted);font-size:10px">e.g. 8-ball overs, 4-ball overs</span></label>
+          <input class="num-input" id="set-balls-per-over" type="number" min="1" max="20" value="6" />
+        </div>
+      </div>
+
+      <div class="setting-group">
         <span class="setting-label">Starting runs</span>
         <div class="setting-row" id="start-runs-row">
           <label>Runs at start of innings<br><span style="color:var(--muted);font-size:10px" id="start-runs-hint">Applied when game begins or resets</span></label>
@@ -736,6 +744,7 @@ const defaultState = () => ({
   noballBase: 2,
   wideRebowl: false,
   noballRebowl: false,
+  ballsPerOver: 6,
   startRuns: 0,
   target: 0,
   over: 1,
@@ -761,7 +770,9 @@ function saveToStorage() {
 function loadFromStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed && !parsed.ballsPerOver) parsed.ballsPerOver = 6;
+    return parsed;
   } catch(e) { return null; }
 }
 
@@ -772,7 +783,14 @@ function resumeGame() {
 }
 
 function startFresh() {
-  state = defaultState();
+  const keep = {
+    wicketRule: state.wicketRule, wicketPenalty: state.wicketPenalty,
+    wideBase: state.wideBase, noballBase: state.noballBase,
+    wideRebowl: state.wideRebowl, noballRebowl: state.noballRebowl,
+    ballsPerOver: state.ballsPerOver,
+    startRuns: state.startRuns, target: state.target
+  };
+  state = Object.assign(defaultState(), keep, { runs: keep.startRuns });
   saveToStorage();
   closeModal('resume-modal');
   refresh();
@@ -1032,7 +1050,7 @@ function renderScore() {
 }
 
 function updateEooButton() {
-  document.getElementById('btn-eoo').classList.toggle('ready', state.legalBalls >= 6);
+  document.getElementById('btn-eoo').classList.toggle('ready', state.legalBalls >= state.ballsPerOver);
 }
 
 function renderDeliveries() {
@@ -1082,6 +1100,7 @@ function updateToggleLabel(checkId, labelId) {
 function showSettings() {
   document.getElementById('screen-score').classList.remove('active');
   document.getElementById('screen-settings').classList.add('active');
+  document.getElementById('set-balls-per-over').value = state.ballsPerOver;
   document.getElementById('set-start-runs').value = state.startRuns;
   const gameStarted = state.deliveries.length > 0;
   document.getElementById('set-start-runs').disabled = gameStarted;
@@ -1111,10 +1130,12 @@ function saveSettings() {
   const w = parseInt(document.getElementById('set-wide').value);
   const nb = parseInt(document.getElementById('set-noball').value);
   const wp = parseInt(document.getElementById('set-wicket-penalty').value);
+  const bpo = parseInt(document.getElementById('set-balls-per-over').value);
   const sr = parseInt(document.getElementById('set-start-runs').value);
   if (!isNaN(w) && w > 0) state.wideBase = w;
   if (!isNaN(nb) && nb > 0) state.noballBase = nb;
   if (!isNaN(wp) && wp > 0) state.wicketPenalty = wp;
+  if (!isNaN(bpo) && bpo > 0) state.ballsPerOver = bpo;
   if (!isNaN(sr) && sr >= 0 && state.deliveries.length === 0) {
     state.startRuns = sr;
     state.runs = sr;
@@ -1125,7 +1146,7 @@ function saveSettings() {
   state.wideRebowl = document.getElementById('set-wide-rebowl').checked;
   state.noballRebowl = document.getElementById('set-noball-rebowl').checked;
   saveToStorage();
-  refresh(); showScore();
+  refresh(); updateEooButton(); showScore();
 }
 
 function handleSliderClick(e) {
@@ -1160,6 +1181,7 @@ function resetAll() {
     wicketRule: state.wicketRule, wicketPenalty: state.wicketPenalty,
     wideBase: state.wideBase, noballBase: state.noballBase,
     wideRebowl: state.wideRebowl, noballRebowl: state.noballRebowl,
+    ballsPerOver: state.ballsPerOver,
     startRuns: state.startRuns, target: state.target
   };
   state = Object.assign(defaultState(), keep, { runs: keep.startRuns });
@@ -1452,6 +1474,9 @@ if (saved && saved.deliveries && saved.deliveries.length > 0) {
     'Game in progress: ' + runs + '/' + wkts + ' — Over ' + (over - 1) + ', Ball ' + ball + '. Resume?';
   // modal stays open, user picks
 } else {
+  // No deliveries recorded yet, but still carry over any saved settings
+  // (balls per over, wide/no-ball/wicket rules, etc.) rather than resetting to defaults.
+  if (saved) state = saved;
   closeModal('resume-modal');
   refresh();
   updateEooButton();

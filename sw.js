@@ -21,8 +21,18 @@ self.addEventListener('activate', e => {
   );
 });
 
+// Network-first: always try to fetch the latest file. Only fall back to the
+// cache if the network request fails (e.g. offline). This way, a new file
+// pushed to GitHub Pages shows up on next load instead of being masked by
+// a stale cached copy.
 self.addEventListener('fetch', e => {
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request))
+    fetch(e.request)
+      .then(res => {
+        const copy = res.clone();
+        caches.open(CACHE).then(c => c.put(e.request, copy));
+        return res;
+      })
+      .catch(() => caches.match(e.request))
   );
 });
