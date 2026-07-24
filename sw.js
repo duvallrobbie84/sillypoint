@@ -1,4 +1,4 @@
-const CACHE = 'silly-point-v1';
+const CACHE = 'silly-point-v2';
 const ASSETS = [
   './index.html',
   './manifest.json',
