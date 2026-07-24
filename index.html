@@ -1181,10 +1181,9 @@ function resetAll() {
     wicketRule: state.wicketRule, wicketPenalty: state.wicketPenalty,
     wideBase: state.wideBase, noballBase: state.noballBase,
     wideRebowl: state.wideRebowl, noballRebowl: state.noballRebowl,
-    ballsPerOver: state.ballsPerOver,
-    startRuns: state.startRuns, target: state.target
+    ballsPerOver: state.ballsPerOver
   };
-  state = Object.assign(defaultState(), keep, { runs: keep.startRuns });
+  state = Object.assign(defaultState(), keep);
   saveToStorage();
   refresh(); updateEooButton(); showScore();
 }
