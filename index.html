@@ -144,7 +144,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 .row { display: flex; gap: 8px; align-items: center; }
 .btn-eoo {
-  flex: 1; height: 42px; background: transparent; border: 1.5px solid var(--ink); color: var(--ink);
+  flex: 2; height: 42px; background: transparent; border: 1.5px solid var(--ink); color: var(--ink);
   border-radius: 7px; font-family: var(--font-mono); font-size: 13px; font-weight: 700;
   cursor: pointer; letter-spacing: 0.06em; text-transform: uppercase;
   transition: background 0.15s, color 0.15s;
@@ -155,6 +155,15 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   background: var(--ink); color: #fff;
 }
 .btn-eoo.ready:hover { opacity: 0.85; }
+.btn-eoi {
+  flex: 1; height: 42px; background: transparent; border: 1.5px dashed var(--muted); color: var(--muted);
+  border-radius: 7px; font-family: var(--font-mono); font-size: 11.5px; font-weight: 700;
+  cursor: pointer; letter-spacing: 0.06em; text-transform: uppercase;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.btn-eoi:hover:not(:disabled) { border-color: var(--ink); color: var(--ink); }
+.btn-eoi:active:not(:disabled) { opacity: 0.7; }
+.btn-eoi:disabled { opacity: 0.35; cursor: default; }
 
 /* SCORESHEET */
 .scoresheet { flex: 1; overflow-y: auto; padding: 0 0 80px; background: var(--bg); }
@@ -176,6 +185,10 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .over-header-inner.complete {
   background: var(--ink); border-color: var(--ink);
   color: #fff; font-weight: 600;
+}
+.over-header-inner.innings-marker {
+  background: var(--danger); border-color: var(--danger);
+  color: #fff; font-weight: 700;
 }
 .delivery-row {
   display: flex; align-items: center; padding: 9px 16px;
@@ -350,6 +363,12 @@ select.modal-select:focus { outline: none; border-color: var(--ink); }
 
 /* SUMMARY MODAL */
 .summary-grid { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; text-align: left; margin-bottom: 20px; }
+.summary-innings-heading {
+  grid-column: 1 / -1; font-family: var(--font-mono); font-weight: 700; font-size: 12px;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink);
+  margin-top: 14px; padding-bottom: 5px; border-bottom: 2px solid var(--ink);
+}
+.summary-innings-heading:first-child { margin-top: 0; }
 .summary-row { display: contents; }
 .summary-label { font-size: 13px; color: var(--muted); padding: 5px 0; border-bottom: 1px solid var(--border); }
 .summary-value { font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: var(--text); padding: 5px 0; border-bottom: 1px solid var(--border); text-align: right; }
@@ -468,6 +487,7 @@ select.modal-select:focus { outline: none; border-color: var(--ink); }
       </div>
       <div class="row">
         <button class="btn-eoo" id="btn-eoo" onclick="endOver()">◼ End of over</button>
+        <button class="btn-eoi" id="btn-eoi" onclick="endInnings()">End innings ›</button>
       </div>
     </div>
 
@@ -642,6 +662,19 @@ select.modal-select:focus { outline: none; border-color: var(--ink); }
   </div>
 </div>
 
+<!-- END INNINGS CONFIRMATION MODAL -->
+<div class="modal-backdrop" id="eoi-modal" onclick="closeOnBackdrop(event,'eoi-modal')">
+  <div class="modal">
+    <div class="modal-icon">II</div>
+    <div class="modal-title">End innings?</div>
+    <div class="modal-body" id="eoi-modal-body">End this innings? The target will be set automatically.</div>
+    <div class="modal-btns">
+      <button class="modal-btn no" onclick="closeModal('eoi-modal')">Cancel</button>
+      <button class="modal-btn yes" onclick="confirmEndInnings()">Yes, end innings</button>
+    </div>
+  </div>
+</div>
+
 <!-- OTHER DELIVERY MODAL -->
 <div class="modal-backdrop" id="other-modal" onclick="closeOnBackdrop(event,'other-modal')">
   <div class="modal">
@@ -747,6 +780,7 @@ const defaultState = () => ({
   ballsPerOver: 6,
   startRuns: 0,
   target: 0,
+  innings: 1,
   over: 1,
   delivery: 1,
   legalBalls: 0,
@@ -772,6 +806,11 @@ function loadFromStorage() {
     const raw = localStorage.getItem(STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : null;
     if (parsed && !parsed.ballsPerOver) parsed.ballsPerOver = 6;
+    if (parsed && !parsed.innings) {
+      parsed.innings = 1;
+      // Tag any pre-existing deliveries as innings 1 so grouping/summary logic works.
+      if (parsed.deliveries) parsed.deliveries.forEach(d => { if (!d.innings) d.innings = 1; });
+    }
     return parsed;
   } catch(e) { return null; }
 }
@@ -870,7 +909,7 @@ function addDelivery(runs, type, withWicket) {
   state.deliveries.push({
     ref: getRef(), label, cls, scoreRuns, bowlPtsChange,
     cumul: state.runs, wickets: state.wickets, bowlingPts: state.bowlingPts,
-    over: state.over, nonLegal, isWicket, isEoo: false, ...snap
+    over: state.over, nonLegal, isWicket, isEoo: false, isEoi: false, innings: state.innings, ...snap
   });
 
   if (!nonLegal) {
@@ -965,24 +1004,61 @@ function confirmOther() {
 
 /* ── END OF OVER ── */
 function endOver() {
-  const hasDeliveries = state.deliveries.some(d => !d.isEoo && d.over === state.over);
+  const hasDeliveries = state.deliveries.some(d => !d.isEoo && !d.isEoi && d.over === state.over && d.innings === state.innings);
   if (!hasDeliveries) return;
   const snap = {
     prevRuns: state.runs, prevWickets: state.wickets, prevBowlingPts: state.bowlingPts,
     prevOver: state.over, prevDelivery: state.delivery,
     prevLegalBalls: state.legalBalls, prevOverDots: [...state.overDots]
   };
-  const overBalls = state.deliveries.filter(d => !d.isEoo && d.over === state.over);
+  const overBalls = state.deliveries.filter(d => !d.isEoo && !d.isEoi && d.over === state.over && d.innings === state.innings);
   const overRuns = overBalls.reduce((s, d) => s + d.scoreRuns, 0);
   const overWkts = overBalls.filter(d => d.isWicket).length;
   state.deliveries.push({
     ref: state.over, label: 'End of over ' + state.over, cls: 'eoo',
     scoreRuns: 0, bowlPtsChange: 0, cumul: state.runs, wickets: state.wickets,
-    bowlingPts: state.bowlingPts, over: state.over,
+    bowlingPts: state.bowlingPts, over: state.over, innings: state.innings,
     overRuns, overWkts,
-    nonLegal: false, isWicket: false, isEoo: true, ...snap
+    nonLegal: false, isWicket: false, isEoo: true, isEoi: false, ...snap
   });
   state.over++; state.delivery = 1; state.legalBalls = 0; state.overDots = [];
+  saveToStorage();
+  refresh();
+  updateEooButton();
+}
+
+/* ── END OF INNINGS ── */
+function endInnings() {
+  if (state.innings >= 2) return; // this scorebook supports two innings
+  const hasDeliveries = state.deliveries.some(d => !d.isEoo && !d.isEoi && d.innings === state.innings);
+  if (!hasDeliveries) return;
+  document.getElementById('eoi-modal-body').textContent =
+    'End innings ' + state.innings + ' at ' + state.runs + '/' + state.wickets + '? Target will be set to ' + (state.runs + 1) + '.';
+  openModal('eoi-modal');
+}
+
+function confirmEndInnings() {
+  closeModal('eoi-modal');
+
+  const snap = {
+    prevRuns: state.runs, prevWickets: state.wickets, prevBowlingPts: state.bowlingPts,
+    prevOver: state.over, prevDelivery: state.delivery,
+    prevLegalBalls: state.legalBalls, prevOverDots: [...state.overDots],
+    prevInnings: state.innings, prevTarget: state.target
+  };
+  state.deliveries.push({
+    ref: 'EOI', label: 'End of innings ' + state.innings, cls: 'eoi',
+    scoreRuns: 0, bowlPtsChange: 0, cumul: state.runs, wickets: state.wickets,
+    bowlingPts: state.bowlingPts, over: state.over, innings: state.innings,
+    finalRuns: state.runs, finalWickets: state.wickets, finalBowlingPts: state.bowlingPts,
+    nonLegal: false, isWicket: false, isEoo: false, isEoi: true, ...snap
+  });
+
+  state.target = state.runs + 1;
+  state.innings++;
+  state.over = 1; state.delivery = 1; state.legalBalls = 0; state.overDots = [];
+  state.runs = state.startRuns; state.wickets = 0; state.bowlingPts = 0;
+
   saveToStorage();
   refresh();
   updateEooButton();
@@ -996,6 +1072,10 @@ function undoLast() {
   state.bowlingPts = last.prevBowlingPts; state.over = last.prevOver;
   state.delivery = last.prevDelivery; state.legalBalls = last.prevLegalBalls;
   state.overDots = last.prevOverDots;
+  if (last.isEoi) {
+    state.innings = last.prevInnings;
+    state.target = last.prevTarget;
+  }
   saveToStorage();
   refresh();
   updateEooButton();
@@ -1037,7 +1117,9 @@ function renderScore() {
   document.getElementById('digits-total').innerHTML = digitTiles(String(state.runs));
   document.getElementById('digits-wkts').innerHTML = digitTiles(String(state.wickets));
   document.getElementById('disp-ref').textContent = getRef();
-  document.getElementById('disp-over').textContent = 'Over ' + (state.over - 1) + ' · Ball ' + state.delivery;
+  document.getElementById('disp-over').textContent =
+    (state.innings > 1 ? 'Innings ' + state.innings + ' · ' : '') +
+    'Over ' + (state.over - 1) + ' · Ball ' + state.delivery;
   const strip = document.getElementById('bowling-strip');
   strip.style.display = state.wicketRule === 2 ? 'flex' : 'none';
   document.getElementById('disp-bowling').textContent = state.bowlingPts;
@@ -1051,42 +1133,60 @@ function renderScore() {
 
 function updateEooButton() {
   document.getElementById('btn-eoo').classList.toggle('ready', state.legalBalls >= state.ballsPerOver);
+  const eoiBtn = document.getElementById('btn-eoi');
+  const hasDeliveriesThisInnings = state.deliveries.some(d => !d.isEoo && !d.isEoi && d.innings === state.innings);
+  eoiBtn.style.display = state.innings >= 2 ? 'none' : '';
+  eoiBtn.disabled = !hasDeliveriesThisInnings;
 }
 
 function renderDeliveries() {
   const el = document.getElementById('scoresheet');
   el.classList.toggle('edit-mode', editMode);
-  const balls = state.deliveries.filter(d => !d.isEoo);
+  const balls = state.deliveries.filter(d => !d.isEoo && !d.isEoi);
   if (balls.length === 0) {
     el.innerHTML = '<div class="empty-state">No deliveries yet.<br>Tap a button above to score.</div>';
     return;
   }
-  const overGroups = {};
-  for (const d of balls) {
-    if (!overGroups[d.over]) overGroups[d.over] = [];
-    overGroups[d.over].push(d);
-  }
+  const inningsNums = [...new Set(balls.map(d => d.innings || 1))].sort((a, b) => b - a);
   let html = '';
-  for (const ov of Object.keys(overGroups).map(Number).sort((a,b) => b-a)) {
-    const bs = overGroups[ov];
-    const eoo = state.deliveries.find(d => d.isEoo && d.over === ov);
-    const overSummary = eoo ? '✓  Over ' + ov + '  (' + eoo.overRuns + '/' + eoo.overWkts + ')' : 'Over ' + ov + '  · current';
-    const cls = eoo ? 'complete' : '';
-    html += '<div class="over-header"><span class="over-header-inner ' + cls + '">' + overSummary + '</span></div>';
-    for (let i = bs.length - 1; i >= 0; i--) {
-      const d = bs[i];
-      const sign = d.scoreRuns > 0 ? '+' + d.scoreRuns : d.scoreRuns === 0 ? '·' : String(d.scoreRuns);
-      const scoreColor = d.scoreRuns < 0 ? 'var(--danger)' :
-                         (d.isWicket && d.scoreRuns === 0) ? 'var(--danger)' :
-                         d.scoreRuns > 0 ? 'var(--ink)' : 'var(--muted)';
-      const idx = state.deliveries.indexOf(d);
-      const clickAttr = editMode ? ' onclick="openEditModal(' + idx + ')"' : '';
-      html += '<div class="delivery-row"' + clickAttr + '>'
-        + '<span class="del-ref">' + d.ref + '</span>'
-        + '<span class="del-desc ' + d.cls + '">' + d.label + '</span>'
-        + '<span class="del-score" style="color:' + scoreColor + '">' + sign + '</span>'
-        + '<span class="del-cumul">' + d.cumul + '</span>'
-        + '</div>';
+  for (let idx = 0; idx < inningsNums.length; idx++) {
+    const inn = inningsNums[idx];
+    const inningsBalls = balls.filter(d => (d.innings || 1) === inn);
+    const overGroups = {};
+    for (const d of inningsBalls) {
+      if (!overGroups[d.over]) overGroups[d.over] = [];
+      overGroups[d.over].push(d);
+    }
+    for (const ov of Object.keys(overGroups).map(Number).sort((a,b) => b-a)) {
+      const bs = overGroups[ov];
+      const eoo = state.deliveries.find(d => d.isEoo && d.over === ov && (d.innings || 1) === inn);
+      const overSummary = eoo ? '✓  Over ' + ov + '  (' + eoo.overRuns + '/' + eoo.overWkts + ')' : 'Over ' + ov + '  · current';
+      const cls = eoo ? 'complete' : '';
+      html += '<div class="over-header"><span class="over-header-inner ' + cls + '">' + overSummary + '</span></div>';
+      for (let i = bs.length - 1; i >= 0; i--) {
+        const d = bs[i];
+        const sign = d.scoreRuns > 0 ? '+' + d.scoreRuns : d.scoreRuns === 0 ? '·' : String(d.scoreRuns);
+        const scoreColor = d.scoreRuns < 0 ? 'var(--danger)' :
+                           (d.isWicket && d.scoreRuns === 0) ? 'var(--danger)' :
+                           d.scoreRuns > 0 ? 'var(--ink)' : 'var(--muted)';
+        const idx2 = state.deliveries.indexOf(d);
+        const clickAttr = editMode ? ' onclick="openEditModal(' + idx2 + ')"' : '';
+        html += '<div class="delivery-row"' + clickAttr + '>'
+          + '<span class="del-ref">' + d.ref + '</span>'
+          + '<span class="del-desc ' + d.cls + '">' + d.label + '</span>'
+          + '<span class="del-score" style="color:' + scoreColor + '">' + sign + '</span>'
+          + '<span class="del-cumul">' + d.cumul + '</span>'
+          + '</div>';
+      }
+    }
+    // The boundary between innings sits right after the newer innings' overs and
+    // before the older innings' overs — i.e. between the two blocks, not at the bottom.
+    const nextInn = inningsNums[idx + 1];
+    if (nextInn !== undefined) {
+      const eoi = state.deliveries.find(d => d.isEoi && (d.innings || 1) === nextInn);
+      if (eoi) {
+        html += '<div class="over-header"><span class="over-header-inner innings-marker">Innings ' + nextInn + ' complete — ' + eoi.finalRuns + '/' + eoi.finalWickets + '</span></div>';
+      }
     }
   }
   el.innerHTML = html;
@@ -1212,6 +1312,8 @@ function exportCSV() {
   for (const d of state.deliveries) {
     if (d.isEoo) {
       rows.push(['Over ' + d.ref, 'End of over', '', '', '', '', '', '', d.cumul, d.wickets, d.bowlingPts]);
+    } else if (d.isEoi) {
+      rows.push(['', 'End of innings ' + d.innings, '', '', '', '', '', '', d.finalRuns, d.finalWickets, d.finalBowlingPts]);
     } else {
       const b = deliveryBreakdown(d);
       rows.push([d.ref, d.label, b.wide || '', b.noball || '', b.bye || '', b.legbye || '', b.runsOffBat || '', d.scoreRuns, d.cumul, d.wickets, d.bowlingPts]);
@@ -1231,6 +1333,8 @@ function exportText() {
   for (const d of state.deliveries) {
     if (d.isEoo) {
       lines.push('', '         ── End of over ' + d.ref + ' ──   Total: ' + d.cumul + '/' + d.wickets + '  Bowl: ' + d.bowlingPts, '');
+    } else if (d.isEoi) {
+      lines.push('', '════ END OF INNINGS ' + d.innings + ' ════   Final: ' + d.finalRuns + '/' + d.finalWickets, '');
     } else {
       const b = deliveryBreakdown(d);
       lines.push(
@@ -1248,7 +1352,13 @@ function exportText() {
       );
     }
   }
-  lines.push('', 'BATTING FINAL: ' + state.runs + '/' + state.wickets);
+  const eoi1 = state.deliveries.find(d => d.isEoi && d.innings === 1);
+  if (eoi1) {
+    lines.push('', 'INNINGS 1 FINAL: ' + eoi1.finalRuns + '/' + eoi1.finalWickets);
+    lines.push('INNINGS 2' + (state.innings === 2 ? ' (CURRENT)' : '') + ': ' + state.runs + '/' + state.wickets);
+  } else {
+    lines.push('', 'BATTING FINAL: ' + state.runs + '/' + state.wickets);
+  }
   if (state.wicketRule === 2) lines.push('BOWLING POINTS: ' + state.bowlingPts);
   downloadFile('scoresheet.txt', lines.join('\n'), 'text/plain');
 }
@@ -1277,7 +1387,7 @@ function toggleEditMode() {
 function openEditModal(deliveryIndex) {
   if (!editMode) return;
   const d = state.deliveries[deliveryIndex];
-  if (!d || d.isEoo) return;
+  if (!d || d.isEoo || d.isEoi) return;
   editingIndex = deliveryIndex;
 
   // Reverse-engineer original runs/type/wicket from the stored delivery
@@ -1393,14 +1503,21 @@ function computeDeliveryFields(runs, type, withWicket) {
 
 // Replay all deliveries to rebuild cumulative totals
 function replayAll() {
-  let runs = state.startRuns, wickets = 0, bowlingPts = 0;
+  let runs = state.startRuns, wickets = 0, bowlingPts = 0, innings = 1;
   for (const d of state.deliveries) {
     if (d.isEoo) {
-      // Recalculate over summary from deliveries in that over
-      const overBalls = state.deliveries.filter(b => !b.isEoo && b.over === d.over);
+      // Recalculate over summary from deliveries in that over (same innings)
+      const overBalls = state.deliveries.filter(b => !b.isEoo && !b.isEoi && b.over === d.over && (b.innings || 1) === (d.innings || 1));
       d.overRuns = overBalls.reduce((s, b) => s + b.scoreRuns, 0);
       d.overWkts = overBalls.filter(b => b.isWicket).length;
       d.cumul = runs; d.wickets = wickets; d.bowlingPts = bowlingPts;
+    } else if (d.isEoi) {
+      // Innings just ended here — lock in its final total and reset for the next innings
+      d.finalRuns = runs; d.finalWickets = wickets; d.finalBowlingPts = bowlingPts;
+      d.cumul = runs; d.wickets = wickets; d.bowlingPts = bowlingPts;
+      state.target = runs + 1; // keep the auto-set target in sync with any edits to innings 1
+      runs = state.startRuns; wickets = 0; bowlingPts = 0;
+      innings = 2;
     } else {
       runs += d.scoreRuns;
       if (d.isWicket) wickets++;
@@ -1408,54 +1525,54 @@ function replayAll() {
       d.cumul = runs; d.wickets = wickets; d.bowlingPts = bowlingPts;
     }
   }
-  // Update live state totals
+  // Update live state totals to reflect whichever innings is currently active
   state.runs = runs; state.wickets = wickets; state.bowlingPts = bowlingPts;
+  state.innings = innings;
 }
 
 /* ── SUMMARY ── */
-function openSummaryModal() {
-  const balls = state.deliveries.filter(d => !d.isEoo);
-
-  let runsOffBat = 0, wides = 0, noballs = 0, byes = 0, legbyes = 0;
+function computeInningsBreakdown(inningsNum) {
+  const balls = state.deliveries.filter(d => !d.isEoo && !d.isEoi && (d.innings || 1) === inningsNum);
+  let runsOffBat = 0, wides = 0, noballs = 0, byes = 0, legbyes = 0, wickets = 0;
   for (const d of balls) {
-    if (d.cls === 'normal' && !d.isWicket) {
-      runsOffBat += d.scoreRuns;
-    } else if (d.cls === 'normal' && d.isWicket) {
-      // wicket on normal delivery — runs off bat
+    if (d.isWicket) wickets++;
+    if (d.cls === 'normal') {
       // scoreRuns may be adjusted by penalty; back-calculate raw batting runs
-      // we store scoreRuns after penalty; for display add penalty back if deducting
-      const raw = state.wicketRule === 1
-        ? d.scoreRuns + state.wicketPenalty
-        : d.scoreRuns;
+      const raw = (d.isWicket && state.wicketRule === 1) ? d.scoreRuns + state.wicketPenalty : d.scoreRuns;
       runsOffBat += Math.max(0, raw);
-    } else {
-      // For extras, compute the base penalty separately from batting contribution
-      const base = (d.label.includes('Wide') ? state.wideBase : 0) +
-                   (d.label.includes('No ball') ? state.noballBase : 0);
-      // Batting runs on top of base (runs physically run on an extra)
-      // These technically are not "runs off bat" — they go to the extra type
-      if (d.label.startsWith('Wide')) wides += d.scoreRuns;
-      else if (d.label.startsWith('No ball')) noballs += d.scoreRuns;
-      else if (d.label.startsWith('Bye')) byes += d.scoreRuns;
-      else if (d.label.startsWith('Leg bye')) legbyes += d.scoreRuns;
-    }
+    } else if (d.label.startsWith('Wide')) wides += d.scoreRuns;
+    else if (d.label.startsWith('No ball')) noballs += d.scoreRuns;
+    else if (d.label.startsWith('Bye')) byes += d.scoreRuns;
+    else if (d.label.startsWith('Leg bye')) legbyes += d.scoreRuns;
   }
-
   const extrasTotal = wides + noballs + byes + legbyes;
-  const total = state.runs;
+  const total = balls.reduce((s, d) => s + d.scoreRuns, 0) + state.startRuns;
+  return { runsOffBat, extrasTotal, wides, noballs, byes, legbyes, total, wickets };
+}
 
+function openSummaryModal() {
   const row = (label, value, cls = '') =>
     `<span class="summary-label ${cls}">${label}</span><span class="summary-value ${cls}">${value}</span>`;
 
-  document.getElementById('summary-grid').innerHTML =
-    row('Runs (off bat)', runsOffBat) +
-    row('Extras', extrasTotal, 'section') +
-    row('Wides (wd)', wides, 'indent') +
-    row('No balls (nb)', noballs, 'indent') +
-    row('Byes (b)', byes, 'indent') +
-    row('Leg byes (lb)', legbyes, 'indent') +
-    row('Total', total + '/' + state.wickets, 'total');
+  const inningsPlayed = [...new Set(state.deliveries.map(d => d.innings || 1))].sort((a, b) => a - b);
+  if (inningsPlayed.length === 0) inningsPlayed.push(1);
+  const showHeadings = inningsPlayed.length > 1;
 
+  let html = '';
+  for (const inn of inningsPlayed) {
+    const s = computeInningsBreakdown(inn);
+    if (showHeadings) html += `<div class="summary-innings-heading">Innings ${inn}</div>`;
+    html += row('Runs (off bat)', s.runsOffBat)
+      + row('Extras', s.extrasTotal, 'section')
+      + row('Wides (wd)', s.wides, 'indent')
+      + row('No balls (nb)', s.noballs, 'indent')
+      + row('Byes (b)', s.byes, 'indent')
+      + row('Leg byes (lb)', s.legbyes, 'indent')
+      + row('Wickets', s.wickets)
+      + row('Total', s.total + '/' + s.wickets, 'total');
+  }
+
+  document.getElementById('summary-grid').innerHTML = html;
   openModal('summary-modal');
 }
 
