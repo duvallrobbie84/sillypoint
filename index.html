@@ -1536,14 +1536,16 @@ function computeInningsBreakdown(inningsNum) {
   let runsOffBat = 0, wides = 0, noballs = 0, byes = 0, legbyes = 0, wickets = 0;
   for (const d of balls) {
     if (d.isWicket) wickets++;
-    if (d.cls === 'normal') {
-      // scoreRuns may be adjusted by penalty; back-calculate raw batting runs
-      const raw = (d.isWicket && state.wicketRule === 1) ? d.scoreRuns + state.wicketPenalty : d.scoreRuns;
-      runsOffBat += Math.max(0, raw);
-    } else if (d.label.startsWith('Wide')) wides += d.scoreRuns;
+    if (d.label.startsWith('Wide')) wides += d.scoreRuns;
     else if (d.label.startsWith('No ball')) noballs += d.scoreRuns;
     else if (d.label.startsWith('Bye')) byes += d.scoreRuns;
     else if (d.label.startsWith('Leg bye')) legbyes += d.scoreRuns;
+    else {
+      // Normal delivery, with or without a wicket — runs off bat.
+      // scoreRuns may be adjusted by penalty; back-calculate raw batting runs
+      const raw = (d.isWicket && state.wicketRule === 1) ? d.scoreRuns + state.wicketPenalty : d.scoreRuns;
+      runsOffBat += Math.max(0, raw);
+    }
   }
   const extrasTotal = wides + noballs + byes + legbyes;
   const total = balls.reduce((s, d) => s + d.scoreRuns, 0) + state.startRuns;
